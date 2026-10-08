@@ -1,17 +1,16 @@
-
 ## O que faz
-Lê um número de uma área da tela via OCR e toca alarme sonoro quando:
-- o valor sai da faixa (acima do máximo ou abaixo do mínimo);
+Lê um número de uma área da tela via OCR e toca um alarme sonoro quando:
+- o valor sai da faixa configurada (acima do máximo ou abaixo do mínimo);
 - o valor fica parado por mais tempo que o configurado;
 - não consegue ler nenhum número por mais tempo que o configurado.
 
 Tem botão de reconhecer alarme e rearma sozinho quando o valor volta para a faixa.
 
 ## Como usar
-1. Baixe `MonitorValor.exe` abaixo.
-2. Abra, selecione a área do número, ajuste os limites e inicie o monitoramento.
+1. Baixe a versão estável `MonitorValor.exe` na release v1.0 do projeto: https://github.com/Smartup1/monitor-valor-ocr/releases/tag/v1.0
+2. Abra o executável, selecione a área do número, ajuste os limites e inicie o monitoramento.
 
-Não precisa instalar Python nem Tesseract, porque ele já vai embutido.
+Não precisa instalar Python nem Tesseract, porque ambos já vêm embutidos no executável.
 
 ## Build
 Gerado com PyInstaller 6.22.3 em Python 3.14, no Windows 11, com o Tesseract 5 embutido (somente o idioma `eng`):
@@ -22,5 +21,5 @@ Para gerar você mesmo, veja a seção "Gerando o executável" do README.
 
 ## Observações
 - Somente Windows.
-- Na primeira abertura pode demorar alguns segundos, porque desempacota o Tesseract.
+- Na primeira abertura pode demorar alguns segundos, porque o Tesseract é desempacotado.
 - Alguns antivírus podem marcar o executável como suspeito (falso positivo comum em programas feitos com PyInstaller).
