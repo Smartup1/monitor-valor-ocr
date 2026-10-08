@@ -1,4 +1,3 @@
-Primeira versão do Monitor de Valor.
 
 ## O que faz
 Lê um número de uma área da tela via OCR e toca alarme sonoro quando:
