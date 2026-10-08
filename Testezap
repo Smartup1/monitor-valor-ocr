@@ -1,0 +1,626 @@
+import ctypes
+import re
+import threading
+import time
+import tkinter as tk
+from tkinter import ttk
+
+import numpy as np
+import cv2
+import pytesseract
+from PIL import Image
+from mss import mss
+import os, sys
+_base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+_tess = os.path.join(_base, "Tesseract-OCR")
+pytesseract.pytesseract.tesseract_cmd = os.path.join(_tess, "tesseract.exe")
+os.environ["TESSDATA_PREFIX"] = os.path.join(_tess, "tessdata")
+try:
+    import winsound  # só existe no Windows
+except ImportError:
+    winsound = None
+
+# Se o pytesseract não achar o Tesseract sozinho, descomente e ajuste:
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+# ==========================================================
+# CORREÇÃO DE ESCALA DE TELA (WINDOWS)
+# ==========================================================
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+# ==========================================================
+# CONFIGURAÇÃO FIXA
+# ==========================================================
+INDICE_MONITOR = 1
+ESPERA_JANELA_SUMIR = 0.4   # só usado ao selecionar a área
+SOM_FREQ_HZ = 1200
+SOM_DURACAO_MS = 350
+SOM_PAUSA_S = 0.25
+INTERVALO_PADRAO_S = 5
+CONFIRMACOES_PADRAO = 3
+CONFIRMACOES_VOLTA_PADRAO = 1
+PARADO_PADRAO_S = 30          # alarme se o valor não mudar por mais que isso (0 = desligado)
+ILEGIVEL_PADRAO_S = 30        # alarme se não conseguir ler nenhum número por mais que isso (0 = desligado)
+TOLERANCIA_MUDANCA = 0.0      # variação mínima para contar como 'mudou' (ex.: 0.05 ignora ruído do OCR)
+
+# Estados do alarme
+ARMADO = "ARMADO"             # pronto para disparar
+ALARMANDO = "ALARMANDO"       # sirene tocando, esperando reconhecer
+RECONHECIDO = "RECONHECIDO"   # reconhecido, quieto até voltar para a faixa
+
+
+# ==========================================================
+# CAPTURA / OCR
+# ==========================================================
+def capturar_tela_inteira():
+    with mss() as sct:
+        monitor = sct.monitors[INDICE_MONITOR]
+        img = np.array(sct.grab(monitor))
+    frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    return frame, monitor
+
+
+def capturar_area(area):
+    with mss() as sct:
+        img = np.array(sct.grab(area))
+    return Image.fromarray(img[:, :, :3])
+
+
+def selecionar_area():
+    frame, monitor = capturar_tela_inteira()
+    titulo = "Selecione a area (ENTER confirma, ESC cancela)"
+    roi = cv2.selectROI(titulo, frame, False, False)
+    cv2.destroyWindow(titulo)
+
+    x, y, w, h = roi
+    if w <= 0 or h <= 0:
+        return None
+    return {
+        "left": int(x + monitor["left"]),
+        "top": int(y + monitor["top"]),
+        "width": int(w),
+        "height": int(h),
+    }
+
+
+def preprocessar_para_ocr(imagem):
+    cinza = np.array(imagem.convert("L"))
+    cinza = cv2.resize(cinza, None, fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+    cinza = cv2.medianBlur(cinza, 3)
+    binarizada = cv2.adaptiveThreshold(
+        cinza, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, blockSize=35, C=10,
+    )
+    if np.mean(binarizada) < 127:
+        binarizada = cv2.bitwise_not(binarizada)
+    return Image.fromarray(binarizada)
+
+
+def preprocessar_otsu(imagem):
+    """Alternativa de pré-processamento (limiar global), para quando o valor muda de cor/fundo."""
+    cinza = np.array(imagem.convert("L"))
+    cinza = cv2.resize(cinza, None, fx=4, fy=4, interpolation=cv2.INTER_LANCZOS4)
+    cinza = cv2.GaussianBlur(cinza, (3, 3), 0)
+    _, binarizada = cv2.threshold(cinza, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if np.mean(binarizada) < 127:
+        binarizada = cv2.bitwise_not(binarizada)
+    return Image.fromarray(binarizada)
+
+
+def _ler_texto(img, psm):
+    config = f"--psm {psm} -c tessedit_char_whitelist=0123456789,.-−"
+    return pytesseract.image_to_string(img, config=config).strip()
+
+
+def _valor_principal(texto):
+    """Número com mais dígitos do texto (lixo do OCR costuma ser curto). None se não houver."""
+    candidatos = []  # (qtd_digitos, valor)
+    for n in re.findall(r"[-−]?\d+[.,]?\d*", texto):
+        try:
+            valor = float(n.replace("−", "-").replace(",", "."))
+        except ValueError:
+            continue
+        candidatos.append((len(re.sub(r"\D", "", n)), valor))
+    if not candidatos:
+        return None
+    return max(candidatos, key=lambda c: c[0])[1]  # empate = o primeiro
+
+
+def extrair_numeros(area):
+    imagem = capturar_area(area)
+
+    # 1ª tentativa: exatamente o método que já funcionava.
+    texto = _ler_texto(preprocessar_para_ocr(imagem), 6)
+    valor = _valor_principal(texto)
+    if valor is not None:
+        return texto, valor
+
+    # Só se não leu número nenhum: tenta alternativas (linha única / outro limiar).
+    otsu = preprocessar_otsu(imagem)
+    for img, psm in ((otsu, 7), (otsu, 6)):
+        try:
+            t = _ler_texto(img, psm)
+        except Exception:
+            continue
+        v = _valor_principal(t)
+        if v is not None:
+            return t, v
+    return texto, None
+
+
+# ==========================================================
+# ALARME SONORO
+# ==========================================================
+class Sirene:
+    """Bipes em loop numa thread. Cada início cria um sinal próprio de parada,
+    então parar e iniciar de novo nunca deixa duas threads tocando juntas."""
+
+    def __init__(self):
+        self._parada = None
+
+    @property
+    def tocando(self):
+        return self._parada is not None and not self._parada.is_set()
+
+    def iniciar(self):
+        if self.tocando:
+            return
+        self._parada = threading.Event()
+        threading.Thread(target=self._loop, args=(self._parada,), daemon=True).start()
+
+    def parar(self):
+        if self._parada is not None:
+            self._parada.set()
+
+    @staticmethod
+    def _bip():
+        if winsound:
+            try:
+                winsound.Beep(SOM_FREQ_HZ, SOM_DURACAO_MS)
+                return
+            except Exception:
+                pass
+            try:
+                winsound.MessageBeep()  # alternativa se o Beep falhar
+                return
+            except Exception:
+                pass
+        print("\a", end="", flush=True)
+
+    def _loop(self, parada):
+        # try/except: uma falha de som nunca pode matar a thread em silêncio
+        while not parada.is_set():
+            try:
+                self._bip()
+            except Exception:
+                pass
+            parada.wait(SOM_PAUSA_S)
+
+
+# ==========================================================
+# INTERFACE
+# ==========================================================
+def ler_limite(texto):
+    """Converte o texto do campo em float. Vazio = sem limite (None)."""
+    texto = texto.strip().replace(",", ".")
+    if not texto:
+        return None
+    return float(texto)
+
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.area = None
+        self.sirene = Sirene()
+        self._piscando = False
+        self.monitorando = False
+        self._after_id = None
+
+        self.estado = ARMADO
+        self.cont_ruim = 0   # leituras seguidas fora da faixa
+        self.cont_boa = 0    # leituras seguidas dentro da faixa (para rearmar)
+        self.historico = []  # últimas leituras: 200✓ dentro, 215✗ fora, ? ilegível
+        self.ultimo_valor = None   # último valor distinto lido
+        self.t_mudanca = None      # quando esse valor apareceu pela primeira vez
+        self.t_ilegivel = None     # quando começou a sequência de leituras sem número
+
+        root.title("Monitor de Valor")
+        root.resizable(False, False)
+        root.attributes("-topmost", True)
+        root.protocol("WM_DELETE_WINDOW", self.on_fechar)
+
+        frm = ttk.Frame(root, padding=12)
+        frm.grid(row=0, column=0)
+
+        # --- Área ---
+        ttk.Button(frm, text="1) Selecionar área", command=self.on_selecionar)\
+            .grid(row=0, column=0, columnspan=2, sticky="ew")
+        self.lbl_area = ttk.Label(frm, text="Nenhuma área selecionada", foreground="gray")
+        self.lbl_area.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 10))
+
+        # --- Limites, intervalo e confirmações ---
+        ttk.Label(frm, text="Alarme se MAIS de:").grid(row=2, column=0, sticky="w")
+        self.var_max = tk.StringVar(value="210")
+        ttk.Entry(frm, textvariable=self.var_max, width=10).grid(row=2, column=1, padx=(8, 0), pady=2)
+
+        ttk.Label(frm, text="Alarme se MENOS de:").grid(row=3, column=0, sticky="w")
+        self.var_min = tk.StringVar(value="190")
+        ttk.Entry(frm, textvariable=self.var_min, width=10).grid(row=3, column=1, padx=(8, 0), pady=2)
+
+        ttk.Label(frm, text="Ler a cada (segundos):").grid(row=4, column=0, sticky="w")
+        self.var_int = tk.StringVar(value=str(INTERVALO_PADRAO_S))
+        ttk.Entry(frm, textvariable=self.var_int, width=10).grid(row=4, column=1, padx=(8, 0), pady=2)
+
+        ttk.Label(frm, text="Confirmar alarme / volta (leituras):").grid(row=5, column=0, sticky="w")
+        sub_frm = ttk.Frame(frm)
+        sub_frm.grid(row=5, column=1, padx=(8, 0), pady=2)
+        self.var_conf = tk.StringVar(value=str(CONFIRMACOES_PADRAO))
+        ttk.Entry(sub_frm, textvariable=self.var_conf, width=4).pack(side="left")
+        ttk.Label(sub_frm, text=" / ").pack(side="left")
+        self.var_conf_volta = tk.StringVar(value=str(CONFIRMACOES_VOLTA_PADRAO))
+        ttk.Entry(sub_frm, textvariable=self.var_conf_volta, width=4).pack(side="left")
+
+        ttk.Label(frm, text="Alarme se parado há (s) [0=off]:").grid(row=6, column=0, sticky="w")
+        self.var_parado = tk.StringVar(value=str(PARADO_PADRAO_S))
+        ttk.Entry(frm, textvariable=self.var_parado, width=10).grid(row=6, column=1, padx=(8, 0), pady=2)
+
+        ttk.Label(frm, text="Alarme se sem ler há (s) [0=off]:").grid(row=7, column=0, sticky="w")
+        self.var_ilegivel = tk.StringVar(value=str(ILEGIVEL_PADRAO_S))
+        ttk.Entry(frm, textvariable=self.var_ilegivel, width=10).grid(row=7, column=1, padx=(8, 0), pady=2)
+
+        self.var_abs = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frm, text="Ignorar sinal (comparar pelo valor absoluto)", variable=self.var_abs)\
+            .grid(row=8, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        # --- Iniciar / parar ---
+        self.btn_iniciar = ttk.Button(frm, text="2) INICIAR MONITORAMENTO", command=self.on_alternar)
+        self.btn_iniciar.grid(row=9, column=0, columnspan=2, sticky="ew", ipady=6, pady=(10, 0))
+        ttk.Button(frm, text="Ler agora (uma vez)", command=self.on_ler_agora)\
+            .grid(row=10, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+
+        # --- Valor atual ---
+        ttk.Label(frm, text="VALOR ATUAL").grid(row=11, column=0, columnspan=2, pady=(12, 0))
+        self.lbl_valor = tk.Label(frm, text="—", font=("Segoe UI", 32, "bold"), width=12)
+        self.lbl_valor.grid(row=12, column=0, columnspan=2)
+        self.lbl_hora = tk.Label(frm, text="Sem leitura ainda", font=("Segoe UI", 9), fg="gray",
+                                 wraplength=300, justify="center")
+        self.lbl_hora.grid(row=13, column=0, columnspan=2)
+        self.lbl_estado = tk.Label(frm, text="", font=("Segoe UI", 9, "bold"))
+        self.lbl_estado.grid(row=14, column=0, columnspan=2)
+        self.lbl_status = tk.Label(frm, text="Aguardando", font=("Segoe UI", 10), wraplength=300)
+        self.lbl_status.grid(row=15, column=0, columnspan=2)
+        self.lbl_aviso = tk.Label(frm, text="", font=("Segoe UI", 9), fg="#e65100", wraplength=300)
+        self.lbl_aviso.grid(row=16, column=0, columnspan=2)
+
+        # --- Reconhecer alarme ---
+        self.btn_reconhecer = tk.Button(
+            frm, text="RECONHECER ALARME", font=("Segoe UI", 11, "bold"),
+            bg="#c62828", fg="white", activebackground="#8e0000",
+            command=self.on_reconhecer, state="disabled",
+        )
+        self.btn_reconhecer.grid(row=17, column=0, columnspan=2, sticky="ew", ipady=6, pady=(8, 0))
+
+        # --- Log só de eventos ---
+        self.log = tk.Text(frm, height=8, width=44, state="disabled", font=("Consolas", 9))
+        self.log.grid(row=18, column=0, columnspan=2, pady=(10, 0))
+
+        self._mostrar_estado()
+
+    # ---------- utilidades ----------
+    def escrever_log(self, msg):
+        self.log.config(state="normal")
+        self.log.insert("end", f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+        self.log.see("end")
+        self.log.config(state="disabled")
+
+    def janela_sobre_area(self):
+        if self.area is None:
+            return False
+        self.root.update_idletasks()
+        x1, y1 = self.root.winfo_rootx(), self.root.winfo_rooty()
+        x2, y2 = x1 + self.root.winfo_width(), y1 + self.root.winfo_height()
+        a = self.area
+        return not (x2 <= a["left"] or x1 >= a["left"] + a["width"]
+                    or y2 <= a["top"] or y1 >= a["top"] + a["height"])
+
+    def ler_confirmacoes(self):
+        try:
+            return max(1, int(float(self.var_conf.get().replace(",", "."))))
+        except ValueError:
+            return CONFIRMACOES_PADRAO
+
+    def registrar_leitura(self, texto, marca):
+        self.historico = (self.historico + [marca])[-6:]
+        self.lbl_hora.config(
+            text=f"Última leitura: {time.strftime('%H:%M:%S')}\n"
+                 f"OCR bruto: {texto!r}\n"
+                 f"Últimas: {'  '.join(self.historico)}")
+
+    def ler_limite_parado(self):
+        try:
+            return max(0.0, float(self.var_parado.get().replace(",", ".")))
+        except ValueError:
+            return float(PARADO_PADRAO_S)
+
+    def ler_limite_ilegivel(self):
+        try:
+            return max(0.0, float(self.var_ilegivel.get().replace(",", ".")))
+        except ValueError:
+            return float(ILEGIVEL_PADRAO_S)
+
+    def reiniciar_detector_parado(self):
+        self.ultimo_valor = None
+        self.t_mudanca = None
+        self.t_ilegivel = None
+
+    def ler_confirmacoes_volta(self):
+        try:
+            return max(1, int(float(self.var_conf_volta.get().replace(",", "."))))
+        except ValueError:
+            return CONFIRMACOES_VOLTA_PADRAO
+
+    # ---------- estado do alarme ----------
+    def _mostrar_estado(self):
+        textos = {
+            ARMADO: ("Estado: ARMADO (alarme pronto)", "green"),
+            ALARMANDO: ("Estado: ALARMANDO — clique em RECONHECER", "red"),
+            RECONHECIDO: ("Estado: RECONHECIDO — aguardando voltar à faixa", "#e65100"),
+        }
+        txt, cor = textos[self.estado]
+        self.lbl_estado.config(text=txt, fg=cor)
+
+    def mudar_estado(self, novo):
+        if novo != self.estado:
+            self.escrever_log(f"Estado: {self.estado} -> {novo}")
+        self.estado = novo
+        self._mostrar_estado()
+
+    def disparar_alarme(self, trazer_frente=True):
+        self.sirene.iniciar()
+        self.btn_reconhecer.config(state="normal")
+        if trazer_frente:
+            self.root.lift()
+        if not self._piscando:
+            self._piscando = True
+            self._piscar(True)
+
+    def _piscar(self, ligado):
+        if not self.sirene.tocando:
+            self._piscando = False
+            self.btn_reconhecer.config(bg="#c62828")
+            return
+        self.btn_reconhecer.config(bg="#ff5252" if ligado else "#c62828")
+        self.root.after(400, self._piscar, not ligado)
+
+    def parar_sirene(self):
+        self.sirene.parar()
+        self.btn_reconhecer.config(state="disabled", bg="#c62828")
+
+    def on_reconhecer(self):
+        if self.estado != ALARMANDO:
+            return
+        self.parar_sirene()
+        self.cont_boa = 0
+        self.mudar_estado(RECONHECIDO)
+        self.lbl_status.config(text="Alarme reconhecido", fg="#e65100")
+
+    def rearmar(self, valores_txt):
+        self.parar_sirene()
+        self.cont_ruim = 0
+        self.cont_boa = 0
+        self.mudar_estado(ARMADO)
+        self.escrever_log(f"Voltou para a faixa ({valores_txt}). Alarme rearmado.")
+        self.lbl_status.config(text="Dentro da faixa — OK (rearmado)", fg="green")
+
+    # ---------- ações ----------
+    def on_selecionar(self):
+        self.root.withdraw()
+        self.root.update()
+        time.sleep(ESPERA_JANELA_SUMIR)
+        try:
+            area = selecionar_area()
+        finally:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+
+        if area is None:
+            self.escrever_log("Seleção cancelada.")
+            return
+        self.area = area
+        self.lbl_area.config(
+            text=f"Área: {area['width']}x{area['height']} em ({area['left']},{area['top']})",
+            foreground="black",
+        )
+        self.escrever_log(f"Área selecionada: {area}")
+        self.parar_sirene()
+        self.cont_ruim = 0
+        self.cont_boa = 0
+        self.reiniciar_detector_parado()
+        self.mudar_estado(ARMADO)
+
+    def on_alternar(self):
+        if self.monitorando:
+            self.monitorando = False
+            if self._after_id is not None:
+                self.root.after_cancel(self._after_id)
+                self._after_id = None
+            self.btn_iniciar.config(text="2) INICIAR MONITORAMENTO")
+            self.lbl_status.config(text="Monitoramento parado", fg="gray")
+            self.escrever_log("Monitoramento parado.")
+            return
+
+        if self.area is None:
+            self.lbl_status.config(text="Selecione a área primeiro", fg="red")
+            return
+        self.monitorando = True
+        self.reiniciar_detector_parado()
+        self.btn_iniciar.config(text="PARAR MONITORAMENTO")
+        self.escrever_log("Monitoramento iniciado.")
+        self._ciclo()
+
+    def on_ler_agora(self):
+        if self.area is None:
+            self.lbl_status.config(text="Selecione a área primeiro", fg="red")
+            return
+        self._ler_protegido()
+
+    def _ler_protegido(self):
+        """Qualquer erro vira mensagem; o monitoramento nunca para por exceção."""
+        try:
+            self.ler_e_avaliar()
+        except Exception as e:
+            self.lbl_status.config(text=f"Erro inesperado: {e}", fg="red")
+            self.escrever_log(f"Erro inesperado: {e!r}")
+
+    def _ciclo(self):
+        if not self.monitorando:
+            return
+        self._ler_protegido()
+        try:
+            seg = max(0.5, float(self.var_int.get().replace(",", ".")))
+        except ValueError:
+            seg = INTERVALO_PADRAO_S
+        self._after_id = self.root.after(int(seg * 1000), self._ciclo)
+
+    # ---------- zona ruim (compartilhada) ----------
+    def tratar_zona_ruim(self, motivos, n_conf, forcar=False):
+        """Conta confirmações e dispara o alarme. forcar=True dispara sem esperar confirmações."""
+        self.lbl_valor.config(fg="red")
+        self.cont_boa = 0
+        texto_motivos = "; ".join(motivos)
+
+        if self.estado == ARMADO:
+            self.cont_ruim += 1
+            if self.cont_ruim >= n_conf or forcar:
+                self.mudar_estado(ALARMANDO)
+                self.lbl_status.config(text="ALARME: " + texto_motivos, fg="red")
+                self.escrever_log(f"ALARME confirmado: {texto_motivos}")
+                self.disparar_alarme(trazer_frente=True)
+            else:
+                self.lbl_status.config(
+                    text=f"Fora da faixa: confirmando {self.cont_ruim}/{n_conf} ({texto_motivos})",
+                    fg="#e65100")
+                self.escrever_log(f"Fora da faixa, confirmando {self.cont_ruim}/{n_conf}: {texto_motivos}")
+        elif self.estado == ALARMANDO:
+            self.lbl_status.config(text="ALARME: " + texto_motivos, fg="red")
+            self.disparar_alarme(trazer_frente=False)
+        else:  # RECONHECIDO
+            self.lbl_status.config(text="Reconhecido, condição persiste: " + texto_motivos, fg="#e65100")
+
+    # ---------- leitura e decisão ----------
+    def ler_e_avaliar(self):
+        try:
+            limite_max = ler_limite(self.var_max.get())
+            limite_min = ler_limite(self.var_min.get())
+        except ValueError:
+            self.lbl_status.config(text="Limite inválido (use só números)", fg="red")
+            return
+
+        n_conf = self.ler_confirmacoes()
+        n_volta = self.ler_confirmacoes_volta()
+
+        self.lbl_aviso.config(
+            text="Atenção: esta janela está em cima da área lida. Mova-a para outro lugar."
+            if self.janela_sobre_area() else ""
+        )
+
+        agora = time.monotonic()
+        limite_ileg = self.ler_limite_ilegivel()
+
+        try:
+            texto, valor = extrair_numeros(self.area)
+        except Exception as e:
+            # Erro de captura/OCR também conta como "sem conseguir ler"
+            self.lbl_status.config(text=f"Erro na leitura: {e}", fg="red")
+            self.escrever_log(f"Erro na leitura: {e}")
+            if self.t_ilegivel is None:
+                self.t_ilegivel = agora
+            ileg_seg = agora - self.t_ilegivel
+            if limite_ileg > 0 and ileg_seg > limite_ileg:
+                self.tratar_zona_ruim([f"sem conseguir ler há {int(ileg_seg)}s"], n_conf, forcar=True)
+            return
+
+        # ---- número ilegível ----
+        if valor is None:
+            self.registrar_leitura(texto, "?")
+            self.lbl_valor.config(text="?", fg="orange")
+            if self.t_ilegivel is None:
+                self.t_ilegivel = agora
+            ileg_seg = agora - self.t_ilegivel
+            if limite_ileg > 0 and ileg_seg > limite_ileg:
+                # Leitura inválida não conta como confirmação normal, mas o tempo
+                # sem ler passou do limite: alarma direto.
+                self.tratar_zona_ruim([f"sem conseguir ler há {int(ileg_seg)}s"], n_conf, forcar=True)
+            else:
+                self.lbl_status.config(
+                    text=f"Não consegui ler número (há {int(ileg_seg)}s)", fg="orange")
+            return
+
+        # leu um número: zera o contador de ilegível
+        self.t_ilegivel = None
+
+        valores_txt = f"{valor:g}"
+        self.lbl_valor.config(text=valores_txt)
+
+        absoluto = bool(self.var_abs.get())
+        ref = abs(valor) if absoluto else valor
+        rotulo = f"|{valor:g}|" if absoluto else f"{valor:g}"
+
+        motivos = []
+        if limite_max is not None and ref > limite_max:
+            motivos.append(f"{rotulo} > {limite_max:g}")
+        if limite_min is not None and ref < limite_min:
+            motivos.append(f"{rotulo} < {limite_min:g}")
+
+        # ---- valor parado (congelado) ----
+        if self.ultimo_valor is None or abs(valor - self.ultimo_valor) > TOLERANCIA_MUDANCA:
+            self.ultimo_valor = valor
+            self.t_mudanca = agora
+        limite_parado = self.ler_limite_parado()
+        parado_seg = agora - self.t_mudanca
+        parado = limite_parado > 0 and parado_seg > limite_parado
+        if parado:
+            motivos.append(f"valor parado há {int(parado_seg)}s")
+
+        self.registrar_leitura(texto, f"{valor:g}{'✗' if motivos else '✓'}")
+
+        # ---------------- ZONA BOA ----------------
+        if not motivos:
+            self.lbl_valor.config(fg="green")
+            self.cont_ruim = 0
+            if self.estado == ARMADO:
+                self.cont_boa = 0
+                self.lbl_status.config(text="Dentro da faixa — OK", fg="green")
+            else:
+                self.cont_boa += 1
+                if self.cont_boa >= n_volta:
+                    self.rearmar(valores_txt)
+                else:
+                    self.lbl_status.config(
+                        text=f"Voltando à faixa: confirmando {self.cont_boa}/{n_volta}", fg="green")
+            return
+
+        # ---------------- ZONA RUIM ----------------
+        self.tratar_zona_ruim(motivos, n_conf, forcar=parado)
+
+    def on_fechar(self):
+        self.monitorando = False
+        self.sirene.parar()
+        self.root.destroy()
+
+
+def main():
+    root = tk.Tk()
+    App(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
