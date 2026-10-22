@@ -43,17 +43,17 @@ CONFIRMACOES_VOLTA_PADRAO = 1
 PARADO_PADRAO_S = 30
 ILEGIVEL_PADRAO_S = 30
 TOLERANCIA_MUDANCA = 0.0
-TOLERANCIA_COR_PADRAO = 25.0   # distância em HSV (0-100) — acima disso = cor mudou
+TOLERANCIA_COR_PADRAO = 25.0
 
-COR_ALARME_PADRAO = "#c62828"
-COR_ALARME_PISCA = "#ff5252"
+COR_ALARME_PADRAO = "#ff2d55"
+COR_ALARME_PISCA = "#ff80a0"
 CORES_PRESET = [
-    ("Vermelho", "#c62828", "#ff5252"),
-    ("Laranja",  "#e65100", "#ff9800"),
-    ("Amarelo",  "#f9a825", "#ffd54f"),
-    ("Verde",    "#2e7d32", "#66bb6a"),
-    ("Azul",     "#1565c0", "#42a5f5"),
-    ("Roxo",     "#6a1b9a", "#ba68c8"),
+    ("Vermelho", "#ff2d55", "#ff80a0"),
+    ("Laranja",  "#ff9500", "#ffcc66"),
+    ("Amarelo",  "#ffd60a", "#ffee66"),
+    ("Verde",    "#00e676", "#66ffaa"),
+    ("Azul",     "#00b0ff", "#66ccff"),
+    ("Roxo",     "#a855f7", "#d4a5ff"),
 ]
 
 ARMADO = "ARMADO"
@@ -67,7 +67,41 @@ MODO_AMBOS = "AMBOS"
 
 
 # ==========================================================
-# CAPTURA / OCR
+# TEMA — HUD ESPACIAL / NEXUS-7
+# ==========================================================
+BG_DEEP      = "#05070f"   # espaço profundo
+BG_PANEL     = "#0a1020"   # fundo dos painéis
+BG_INPUT     = "#0f1830"   # inputs / caixas
+BG_HOVER     = "#182848"   # hover
+BG_TERM      = "#02050c"   # terminal de log
+BORDER_DIM   = "#1a2a4a"   # borda sutil
+BORDER_GLOW  = "#00d9ff"   # borda neon (foco)
+
+FG_TEXT      = "#d0e4ff"   # texto principal
+FG_DIM       = "#5a7a9f"   # texto secundário
+FG_HEADER    = "#4d7aab"   # header
+FG_LABEL     = "#7aa5c9"   # rótulos de painel
+
+ACCENT_CYAN    = "#00e5ff"
+ACCENT_MAGENTA = "#ff2d95"
+ACCENT_GREEN   = "#00ff88"
+ACCENT_ORANGE  = "#ffaa00"
+ACCENT_RED     = "#ff3860"
+ACCENT_PURPLE  = "#a855f7"
+
+FONT_TECH        = ("Consolas", 9)
+FONT_TECH_BOLD   = ("Consolas", 9, "bold")
+FONT_TECH_SMALL  = ("Consolas", 8)
+FONT_LABEL       = ("Segoe UI", 8, "bold")
+FONT_HEADER      = ("Consolas", 16, "bold")
+FONT_SUBTITLE    = ("Consolas", 7)
+FONT_VALUE       = ("Consolas", 26, "bold")
+FONT_BODY        = ("Segoe UI", 9)
+FONT_BODY_BOLD   = ("Segoe UI", 9, "bold")
+
+
+# ==========================================================
+# CAPTURA / OCR (inalterado)
 # ==========================================================
 def capturar_tela_inteira():
     with mss() as sct:
@@ -84,10 +118,9 @@ def capturar_area(area):
 
 
 def capturar_area_cv(area):
-    """Retorna a área como array BGR (para análise de cor)."""
     with mss() as sct:
         img = np.array(sct.grab(area))
-    return img[:, :, :3].copy()  # BGR
+    return img[:, :, :3].copy()
 
 
 def selecionar_area():
@@ -196,23 +229,16 @@ def normalizar_texto(texto):
 
 
 # ==========================================================
-# ANÁLISE DE COR
+# ANÁLISE DE COR (inalterado)
 # ==========================================================
 def _assinatura_cor(bgr):
-    """Retorna assinatura robusta da cor de uma região BGR:
-    - média HSV (hue 0-179, sat 0-255, val 0-255)
-    - média RGB
-    - desvio padrão do HSV (para saber se é uniforme ou colorido)
-    """
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    # ignora pixels muito escuros (ruído) para não poluir a média de hue
     mask = hsv[:, :, 2] > 30
     if not np.any(mask):
         mask = np.ones_like(mask, dtype=bool)
     h = hsv[:, :, 0][mask]
     s = hsv[:, :, 1][mask]
     v = hsv[:, :, 2][mask]
-    # média circular do hue (evita problema 0/179)
     h_rad = np.deg2rad(h.astype(np.float32) * 2)
     h_mean = (np.rad2deg(np.arctan2(np.sin(h_rad).mean(), np.cos(h_rad).mean())) / 2) % 180
     rgb = bgr[:, :, ::-1]
@@ -229,16 +255,13 @@ def _assinatura_cor(bgr):
 
 
 def distancia_cor(assin_a, assin_b):
-    """Distância combinada: diferença de hue (circular) + saturação + brilho + RGB.
-    Retorna valor em escala ~0-100."""
     dh = abs(assin_a["h"] - assin_b["h"])
-    dh = min(dh, 180 - dh) * (100.0 / 90.0)   # normaliza 0-100
+    dh = min(dh, 180 - dh) * (100.0 / 90.0)
     ds = abs(assin_a["s"] - assin_b["s"]) * (100.0 / 255.0)
     dv = abs(assin_a["v"] - assin_b["v"]) * (100.0 / 255.0)
     drgb = (abs(assin_a["r"] - assin_b["r"]) +
             abs(assin_a["g"] - assin_b["g"]) +
             abs(assin_a["b"] - assin_b["b"])) / 3.0 * (100.0 / 255.0)
-    # peso maior para hue/RGB (mudança real de cor); sat/brilho pesam menos
     return 0.35 * dh + 0.10 * ds + 0.10 * dv + 0.45 * drgb
 
 
@@ -250,7 +273,7 @@ def cor_media_rgb(bgr):
 
 
 # ==========================================================
-# ALARME SONORO
+# ALARME SONORO (inalterado)
 # ==========================================================
 class Sirene:
     def __init__(self):
@@ -294,9 +317,6 @@ class Sirene:
             parada.wait(SOM_PAUSA_S)
 
 
-# ==========================================================
-# INTERFACE
-# ==========================================================
 def ler_limite(texto):
     texto = texto.strip().replace(",", ".")
     if not texto:
@@ -304,6 +324,9 @@ def ler_limite(texto):
     return float(texto)
 
 
+# ==========================================================
+# INTERFACE — HUD ESPACIAL
+# ==========================================================
 class App:
     def __init__(self, root):
         self.root = root
@@ -312,6 +335,7 @@ class App:
         self._piscando = False
         self.monitorando = False
         self._after_id = None
+        self._pulse_after_id = None
 
         self.estado = ARMADO
         self.cont_ruim = 0
@@ -325,185 +349,349 @@ class App:
         self.cont_texto_ruim = 0
         self.ultimo_texto_lido = ""
 
-        # --- cor ---
-        self.cor_referencia = None          # assinatura de cor da área original
-        self.cor_referencia_rgb = None      # média RGB para mostrar
+        self.cor_referencia = None
+        self.cor_referencia_rgb = None
         self.cont_cor_ruim = 0
         self.cont_cor_boa = 0
 
         self.cor_alarme = COR_ALARME_PADRAO
         self.cor_alarme_pisca = COR_ALARME_PISCA
 
-        root.title("Monitor de Valor / Texto / Cor")
+        root.title("◈ NEXUS-7 // MONITOR DE SISTEMA")
+        root.configure(bg=BG_DEEP)
         root.resizable(False, False)
         root.attributes("-topmost", True)
         root.protocol("WM_DELETE_WINDOW", self.on_fechar)
 
-        frm = ttk.Frame(root, padding=8)
-        frm.grid(row=0, column=0)
-        frm.columnconfigure(1, weight=1)
+        self._build_ui()
+        self._mostrar_estado()
+        self._start_pulse()
 
-        r = 0
-        # --- Área ---
-        linha_area = ttk.Frame(frm)
-        linha_area.grid(row=r, column=0, columnspan=2, sticky="ew")
-        ttk.Button(linha_area, text="1) Selecionar área", command=self.on_selecionar)\
-            .pack(side="left")
-        self.lbl_area = ttk.Label(linha_area, text="(nenhuma)", foreground="gray")
-        self.lbl_area.pack(side="left", padx=(6, 0))
-        r += 1
+    # ------------------------------------------------------
+    # Construtores visuais
+    # ------------------------------------------------------
+    def _panel(self, parent, title, accent=ACCENT_CYAN):
+        outer = tk.Frame(parent, bg=BG_PANEL,
+                         highlightbackground=BORDER_DIM,
+                         highlightcolor=BORDER_DIM,
+                         highlightthickness=1)
+        accent_bar = tk.Frame(outer, bg=accent, height=1)
+        accent_bar.pack(fill="x")
+        header = tk.Frame(outer, bg=BG_PANEL)
+        header.pack(fill="x")
+        tk.Label(header, text="◆", fg=accent, bg=BG_PANEL,
+                 font=("Segoe UI", 7)).pack(side="left", padx=(8, 4), pady=5)
+        tk.Label(header, text=title, fg=accent, bg=BG_PANEL,
+                 font=FONT_LABEL).pack(side="left", pady=5)
+        tk.Frame(outer, bg=BORDER_DIM, height=1).pack(fill="x")
+        body = tk.Frame(outer, bg=BG_PANEL)
+        body.pack(fill="both", expand=True, padx=10, pady=8)
+        return outer, body
 
-        # --- Modo (4 radiobuttons na mesma linha) ---
-        frm_modo = ttk.LabelFrame(frm, text="Modo", padding=4)
-        frm_modo.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(4, 4))
+    def _btn(self, parent, text, command, accent=ACCENT_CYAN,
+             primary=False, width=None):
+        bg = accent if primary else BG_INPUT
+        fg = BG_DEEP if primary else accent
+        ab = ACCENT_MAGENTA if primary else accent
+        b = tk.Button(
+            parent, text=text, command=command,
+            bg=bg, fg=fg, activebackground=ab, activeforeground=BG_DEEP,
+            font=FONT_BODY_BOLD, bd=0, relief="flat",
+            highlightthickness=1, highlightbackground=accent,
+            highlightcolor=accent, cursor="hand2",
+            padx=8, pady=4,
+        )
+        if width:
+            b.config(width=width)
+        return b
+
+    def _entry(self, parent, var, width=6):
+        return tk.Entry(
+            parent, textvariable=var, width=width,
+            bg=BG_INPUT, fg=ACCENT_CYAN, insertbackground=ACCENT_CYAN,
+            relief="flat", bd=0, highlightthickness=1,
+            highlightbackground=BORDER_DIM, highlightcolor=ACCENT_CYAN,
+            font=FONT_TECH, justify="center",
+        )
+
+    def _tag(self, parent, text, color=FG_LABEL):
+        return tk.Label(parent, text=text, bg=BG_PANEL, fg=color,
+                        font=FONT_LABEL)
+
+    def _radio(self, parent, text, var, value):
+        return tk.Radiobutton(
+            parent, text=text, variable=var, value=value,
+            bg=BG_PANEL, fg=FG_TEXT, selectcolor=BG_INPUT,
+            activebackground=BG_PANEL, activeforeground=ACCENT_CYAN,
+            font=FONT_BODY, bd=0, highlightthickness=0, cursor="hand2",
+        )
+
+    # ------------------------------------------------------
+    # Montagem completa da UI
+    # ------------------------------------------------------
+    def _build_ui(self):
+        frm = tk.Frame(self.root, bg=BG_DEEP, padx=10, pady=10)
+        frm.pack(fill="both", expand=True)
+
+        # ---------- HEADER ----------
+        header = tk.Frame(frm, bg=BG_DEEP)
+        header.pack(fill="x", pady=(0, 8))
+
+        logo = tk.Label(header, text="◈", fg=ACCENT_CYAN, bg=BG_DEEP,
+                        font=("Segoe UI", 18, "bold"))
+        logo.pack(side="left", padx=(0, 8))
+
+        title_box = tk.Frame(header, bg=BG_DEEP)
+        title_box.pack(side="left")
+        tk.Label(title_box, text="NEXUS-7", fg=ACCENT_CYAN, bg=BG_DEEP,
+                 font=FONT_HEADER).pack(anchor="w")
+        tk.Label(title_box, text="MONITOR DE SISTEMA // SECTOR-07",
+                 fg=FG_DIM, bg=BG_DEEP, font=FONT_SUBTITLE).pack(anchor="w")
+
+        # barra decorativa topo
+        deco = tk.Canvas(frm, height=2, bg=BG_DEEP, highlightthickness=0)
+        deco.pack(fill="x", pady=(0, 8))
+        deco.bind("<Configure>", lambda e: self._draw_deco_bar(e, deco))
+
+        # ---------- PAINEL ÁREA ----------
+        p_area, b_area = self._panel(frm, "ÁREA DE CAPTURA", ACCENT_CYAN)
+        p_area.pack(fill="x", pady=(0, 6))
+        linha = tk.Frame(b_area, bg=BG_PANEL)
+        linha.pack(fill="x")
+        self._btn(linha, "1) SELECIONAR ÁREA", self.on_selecionar,
+                  accent=ACCENT_CYAN).pack(side="left")
+        self.lbl_area = tk.Label(linha, text="(nenhuma)", bg=BG_PANEL,
+                                 fg=FG_DIM, font=FONT_TECH_SMALL)
+        self.lbl_area.pack(side="left", padx=(8, 0))
+
+        # ---------- PAINEL MODO ----------
+        p_modo, b_modo = self._panel(frm, "MODO DE MONITORAMENTO", ACCENT_MAGENTA)
+        p_modo.pack(fill="x", pady=(0, 6))
         self.var_modo = tk.StringVar(value=MODO_NUMERO)
-        ttk.Radiobutton(frm_modo, text="Número", variable=self.var_modo, value=MODO_NUMERO)\
-            .pack(side="left")
-        ttk.Radiobutton(frm_modo, text="Texto", variable=self.var_modo, value=MODO_TEXTO)\
-            .pack(side="left", padx=(6, 0))
-        ttk.Radiobutton(frm_modo, text="Cor", variable=self.var_modo, value=MODO_COR)\
-            .pack(side="left", padx=(6, 0))
-        ttk.Radiobutton(frm_modo, text="Ambos", variable=self.var_modo, value=MODO_AMBOS)\
-            .pack(side="left", padx=(6, 0))
-        r += 1
+        modos = tk.Frame(b_modo, bg=BG_PANEL)
+        modos.pack(fill="x")
+        self._radio(modos, "NÚMERO", self.var_modo, MODO_NUMERO).pack(side="left")
+        self._radio(modos, "TEXTO",  self.var_modo, MODO_TEXTO).pack(side="left", padx=(6, 0))
+        self._radio(modos, "COR",    self.var_modo, MODO_COR).pack(side="left", padx=(6, 0))
+        self._radio(modos, "AMBOS",  self.var_modo, MODO_AMBOS).pack(side="left", padx=(6, 0))
 
-        # --- Limites + intervalo ---
-        lin1 = ttk.Frame(frm)
-        lin1.grid(row=r, column=0, columnspan=2, sticky="ew")
-        ttk.Label(lin1, text=">").pack(side="left")
+        # ---------- PAINEL PARÂMETROS ----------
+        p_par, b_par = self._panel(frm, "PARÂMETROS", ACCENT_PURPLE)
+        p_par.pack(fill="x", pady=(0, 6))
+
+        # linha 1 — limites + intervalo
+        l1 = tk.Frame(b_par, bg=BG_PANEL)
+        l1.pack(fill="x", pady=(0, 4))
+        self._tag(l1, ">").pack(side="left")
         self.var_max = tk.StringVar(value="210")
-        ttk.Entry(lin1, textvariable=self.var_max, width=6).pack(side="left", padx=(2, 8))
-        ttk.Label(lin1, text="<").pack(side="left")
+        self._entry(l1, self.var_max, 6).pack(side="left", padx=(2, 8), ipady=2)
+        self._tag(l1, "<").pack(side="left")
         self.var_min = tk.StringVar(value="190")
-        ttk.Entry(lin1, textvariable=self.var_min, width=6).pack(side="left", padx=(2, 12))
-        ttk.Label(lin1, text="Intervalo (s):").pack(side="left")
+        self._entry(l1, self.var_min, 6).pack(side="left", padx=(2, 10), ipady=2)
+        self._tag(l1, "INTERVALO (s)").pack(side="left")
         self.var_int = tk.StringVar(value=str(INTERVALO_PADRAO_S))
-        ttk.Entry(lin1, textvariable=self.var_int, width=5).pack(side="left", padx=(2, 0))
-        r += 1
+        self._entry(l1, self.var_int, 4).pack(side="left", padx=(4, 0), ipady=2)
 
-        lin2 = ttk.Frame(frm)
-        lin2.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        ttk.Label(lin2, text="Confirma:").pack(side="left")
+        # linha 2 — confirmações + parado
+        l2 = tk.Frame(b_par, bg=BG_PANEL)
+        l2.pack(fill="x", pady=(0, 4))
+        self._tag(l2, "CONFIRMA").pack(side="left")
         self.var_conf = tk.StringVar(value=str(CONFIRMACOES_PADRAO))
-        ttk.Entry(lin2, textvariable=self.var_conf, width=4).pack(side="left", padx=(2, 6))
-        ttk.Label(lin2, text="Volta:").pack(side="left")
+        self._entry(l2, self.var_conf, 4).pack(side="left", padx=(4, 6), ipady=2)
+        self._tag(l2, "VOLTA").pack(side="left")
         self.var_conf_volta = tk.StringVar(value=str(CONFIRMACOES_VOLTA_PADRAO))
-        ttk.Entry(lin2, textvariable=self.var_conf_volta, width=4).pack(side="left", padx=(2, 12))
-        ttk.Label(lin2, text="Parado(s):").pack(side="left")
+        self._entry(l2, self.var_conf_volta, 4).pack(side="left", padx=(4, 10), ipady=2)
+        self._tag(l2, "PARADO(s)").pack(side="left")
         self.var_parado = tk.StringVar(value=str(PARADO_PADRAO_S))
-        ttk.Entry(lin2, textvariable=self.var_parado, width=5).pack(side="left", padx=(2, 0))
-        r += 1
+        self._entry(l2, self.var_parado, 4).pack(side="left", padx=(4, 0), ipady=2)
 
-        lin3 = ttk.Frame(frm)
-        lin3.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        ttk.Label(lin3, text="Sem ler(s):").pack(side="left")
+        # linha 3 — ilegível + |abs| + cor
+        l3 = tk.Frame(b_par, bg=BG_PANEL)
+        l3.pack(fill="x", pady=(0, 4))
+        self._tag(l3, "SEM LER(s)").pack(side="left")
         self.var_ilegivel = tk.StringVar(value=str(ILEGIVEL_PADRAO_S))
-        ttk.Entry(lin3, textvariable=self.var_ilegivel, width=5).pack(side="left", padx=(2, 12))
+        self._entry(l3, self.var_ilegivel, 4).pack(side="left", padx=(4, 10), ipady=2)
         self.var_abs = tk.BooleanVar(value=True)
-        ttk.Checkbutton(lin3, text="|abs|", variable=self.var_abs)\
-            .pack(side="left")
-        ttk.Label(lin3, text="Cor:").pack(side="left", padx=(10, 2))
+        tk.Checkbutton(
+            l3, text="|abs|", variable=self.var_abs,
+            bg=BG_PANEL, fg=FG_TEXT, selectcolor=BG_INPUT,
+            activebackground=BG_PANEL, activeforeground=ACCENT_CYAN,
+            font=FONT_BODY, bd=0, highlightthickness=0, cursor="hand2",
+        ).pack(side="left")
+        self._tag(l3, "COR ALARME").pack(side="left", padx=(10, 4))
         self.var_cor_preset = tk.StringVar(value=CORES_PRESET[0][0])
-        opt = ttk.OptionMenu(lin3, self.var_cor_preset, CORES_PRESET[0][0],
-                             *[c[0] for c in CORES_PRESET], command=self._aplicar_cor_preset)
-        opt.configure(width=8)
+        opt = tk.OptionMenu(l3, self.var_cor_preset, CORES_PRESET[0][0],
+                            *[c[0] for c in CORES_PRESET],
+                            command=self._aplicar_cor_preset)
+        opt.configure(bg=BG_INPUT, fg=ACCENT_CYAN, activebackground=ACCENT_CYAN,
+                      activeforeground=BG_DEEP, bd=0, relief="flat",
+                      highlightthickness=0, font=FONT_TECH_SMALL, width=8,
+                      cursor="hand2")
+        opt["menu"].configure(bg=BG_INPUT, fg=ACCENT_CYAN,
+                              activebackground=ACCENT_CYAN,
+                              activeforeground=BG_DEEP, bd=0, font=FONT_TECH_SMALL)
         opt.pack(side="left")
-        ttk.Button(lin3, text="🎨", width=3, command=self._escolher_cor_custom)\
-            .pack(side="left", padx=(2, 0))
-        r += 1
+        self._btn(l3, "🎨", self._escolher_cor_custom,
+                  accent=ACCENT_MAGENTA, width=2).pack(side="left", padx=(4, 0))
 
-        # --- Tolerância de cor ---
-        lin3b = ttk.Frame(frm)
-        lin3b.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        ttk.Label(lin3b, text="Tolerância cor (0-100):").pack(side="left")
+        # linha 4 — tolerância + recapturar
+        l4 = tk.Frame(b_par, bg=BG_PANEL)
+        l4.pack(fill="x")
+        self._tag(l4, "TOLERÂNCIA COR (0-100)").pack(side="left")
         self.var_tol_cor = tk.StringVar(value=str(int(TOLERANCIA_COR_PADRAO)))
-        ttk.Entry(lin3b, textvariable=self.var_tol_cor, width=5).pack(side="left", padx=(2, 6))
-        ttk.Button(lin3b, text="Recapturar cor ref.", command=self.recapturar_cor_ref)\
-            .pack(side="left")
-        r += 1
+        self._entry(l4, self.var_tol_cor, 4).pack(side="left", padx=(4, 10), ipady=2)
+        self._btn(l4, "↺ RECAPTURAR COR REF", self.recapturar_cor_ref,
+                  accent=ACCENT_ORANGE).pack(side="left")
 
-        self.lbl_texto_ref = ttk.Label(frm, text="Texto ref.: (não capturado)",
-                                       foreground="gray", font=("Segoe UI", 8), wraplength=340)
-        self.lbl_texto_ref.grid(row=r, column=0, columnspan=2, sticky="w")
-        r += 1
+        # texto de referência
+        self.lbl_texto_ref = tk.Label(
+            b_par, text="TEXTO REF.: (não capturado)", fg=FG_DIM, bg=BG_PANEL,
+            font=FONT_TECH_SMALL, wraplength=380, justify="left", anchor="w",
+        )
+        self.lbl_texto_ref.pack(fill="x", pady=(6, 0))
 
-        # --- Botões principais ---
-        botoes = ttk.Frame(frm)
-        botoes.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        botoes.columnconfigure(0, weight=1)
-        botoes.columnconfigure(1, weight=1)
-        self.btn_iniciar = ttk.Button(botoes, text="INICIAR", command=self.on_alternar)
-        self.btn_iniciar.grid(row=0, column=0, sticky="ew", ipady=3)
-        ttk.Button(botoes, text="Ler agora", command=self.on_ler_agora)\
-            .grid(row=0, column=1, sticky="ew", ipady=3, padx=(4, 0))
-        r += 1
+        # ---------- PAINEL LEITURA ----------
+        p_rd, b_rd = self._panel(frm, "TELEMETRIA / LEITURA", ACCENT_GREEN)
+        p_rd.pack(fill="x", pady=(0, 6))
 
-        # --- Valor + texto + cor atual ---
-        meio = ttk.Frame(frm)
-        meio.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        meio.columnconfigure(0, weight=0)
-        meio.columnconfigure(1, weight=1)
-        meio.columnconfigure(2, weight=0)
+        grid = tk.Frame(b_rd, bg=BG_PANEL)
+        grid.pack(fill="x")
+        grid.columnconfigure(0, weight=0)
+        grid.columnconfigure(1, weight=1)
+        grid.columnconfigure(2, weight=0)
 
-        bloco_val = ttk.Frame(meio)
-        bloco_val.grid(row=0, column=0, sticky="n")
-        ttk.Label(bloco_val, text="VALOR", font=("Segoe UI", 8)).pack()
-        self.lbl_valor = tk.Label(bloco_val, text="—", font=("Segoe UI", 20, "bold"), width=7)
+        # VALOR
+        cv_ = tk.Frame(grid, bg=BG_PANEL)
+        cv_.grid(row=0, column=0, sticky="ns")
+        tk.Label(cv_, text="VALOR", fg=FG_LABEL, bg=BG_PANEL,
+                 font=FONT_LABEL).pack()
+        self.lbl_valor = tk.Label(cv_, text="—", font=FONT_VALUE,
+                                  fg=ACCENT_CYAN, bg=BG_PANEL, width=6)
         self.lbl_valor.pack()
 
-        bloco_txt = ttk.Frame(meio)
-        bloco_txt.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        ttk.Label(bloco_txt, text="TEXTO ATUAL", font=("Segoe UI", 8)).pack(anchor="w")
+        # TEXTO ATUAL
+        ct = tk.Frame(grid, bg=BG_PANEL)
+        ct.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        tk.Label(ct, text="TEXTO ATUAL", fg=FG_LABEL, bg=BG_PANEL,
+                 font=FONT_LABEL).pack(anchor="w")
         self.lbl_texto_atual = tk.Label(
-            bloco_txt, text="—", font=("Consolas", 9), height=3,
-            wraplength=200, justify="left", anchor="nw", relief="sunken", bg="white",
+            ct, text="—", font=("Consolas", 8), height=3,
+            wraplength=170, justify="left", anchor="nw",
+            bg=BG_INPUT, fg=FG_TEXT, bd=0,
+            highlightthickness=1, highlightbackground=BORDER_DIM,
         )
         self.lbl_texto_atual.pack(fill="both", expand=True)
 
-        bloco_cor = ttk.Frame(meio)
-        bloco_cor.grid(row=0, column=2, sticky="n", padx=(8, 0))
-        ttk.Label(bloco_cor, text="COR", font=("Segoe UI", 8)).pack()
+        # COR
+        cc = tk.Frame(grid, bg=BG_PANEL)
+        cc.grid(row=0, column=2, sticky="ns", padx=(10, 0))
+        tk.Label(cc, text="COR", fg=FG_LABEL, bg=BG_PANEL,
+                 font=FONT_LABEL).pack()
         self.lbl_cor_atual = tk.Label(
-            bloco_cor, text="", bg="white", width=4, height=2,
-            relief="sunken", bd=2,
+            cc, text="", bg=BG_INPUT, width=4, height=2,
+            relief="flat", bd=0, highlightthickness=2,
+            highlightbackground=BORDER_DIM,
         )
         self.lbl_cor_atual.pack()
-        self.lbl_cor_info = tk.Label(bloco_cor, text="—", font=("Consolas", 7), fg="gray")
+        self.lbl_cor_info = tk.Label(cc, text="—", font=("Consolas", 7),
+                                     fg=FG_DIM, bg=BG_PANEL)
         self.lbl_cor_info.pack()
-        r += 1
 
-        self.lbl_hora = tk.Label(frm, text="Sem leitura ainda", font=("Segoe UI", 8), fg="gray",
-                                 wraplength=380, justify="left", anchor="w")
-        self.lbl_hora.grid(row=r, column=0, columnspan=2, sticky="w")
-        r += 1
-        self.lbl_estado = tk.Label(frm, text="", font=("Segoe UI", 9, "bold"))
-        self.lbl_estado.grid(row=r, column=0, columnspan=2, sticky="w")
-        r += 1
-        self.lbl_status = tk.Label(frm, text="Aguardando", font=("Segoe UI", 9),
-                                   wraplength=380, justify="left", anchor="w")
-        self.lbl_status.grid(row=r, column=0, columnspan=2, sticky="w")
-        r += 1
-        self.lbl_aviso = tk.Label(frm, text="", font=("Segoe UI", 8), fg="#e65100",
-                                  wraplength=380, justify="left", anchor="w")
-        self.lbl_aviso.grid(row=r, column=0, columnspan=2, sticky="w")
-        r += 1
+        # ---------- PAINEL STATUS ----------
+        p_st, b_st = self._panel(frm, "STATUS DO SISTEMA", ACCENT_ORANGE)
+        p_st.pack(fill="x", pady=(0, 6))
 
-        # --- RECONHECER ---
-        self.btn_reconhecer = tk.Button(
-            frm, text="RECONHECER ALARME", font=("Segoe UI", 10, "bold"),
-            bg=self.cor_alarme, fg="white", activebackground="#8e0000",
-            command=self.on_reconhecer, state="disabled", height=1,
+        self.lbl_hora = tk.Label(
+            b_st, text="SEM LEITURA AINDA", font=FONT_TECH_SMALL, fg=FG_DIM,
+            bg=BG_PANEL, wraplength=380, justify="left", anchor="w",
         )
-        self.btn_reconhecer.grid(row=r, column=0, columnspan=2, sticky="ew", ipady=4, pady=(6, 0))
-        r += 1
+        self.lbl_hora.pack(fill="x")
 
-        self.log = tk.Text(frm, height=5, width=54, state="disabled", font=("Consolas", 8))
-        self.log.grid(row=r, column=0, columnspan=2, pady=(6, 0))
-        r += 1
+        line_state = tk.Frame(b_st, bg=BG_PANEL)
+        line_state.pack(fill="x", pady=(4, 0))
+        self.lbl_pulse = tk.Label(line_state, text="●", fg=ACCENT_GREEN,
+                                  bg=BG_PANEL, font=("Segoe UI", 9))
+        self.lbl_pulse.pack(side="left")
+        self.lbl_estado = tk.Label(line_state, text="", font=FONT_BODY_BOLD,
+                                   bg=BG_PANEL, fg=ACCENT_GREEN)
+        self.lbl_estado.pack(side="left", padx=(4, 0))
 
-        self._mostrar_estado()
+        self.lbl_status = tk.Label(
+            b_st, text="Aguardando", font=FONT_BODY,
+            bg=BG_PANEL, fg=FG_TEXT,
+            wraplength=380, justify="left", anchor="w",
+        )
+        self.lbl_status.pack(fill="x", pady=(2, 0))
 
-    # ---------- cor do alarme ----------
+        self.lbl_aviso = tk.Label(
+            b_st, text="", font=FONT_TECH_SMALL, fg=ACCENT_ORANGE, bg=BG_PANEL,
+            wraplength=380, justify="left", anchor="w",
+        )
+        self.lbl_aviso.pack(fill="x")
+
+        # ---------- AÇÕES ----------
+        acts = tk.Frame(frm, bg=BG_DEEP)
+        acts.pack(fill="x", pady=(0, 6))
+        acts.columnconfigure(0, weight=1)
+        acts.columnconfigure(1, weight=1)
+        self.btn_iniciar = self._btn(acts, "▶ INICIAR", self.on_alternar,
+                                     accent=ACCENT_GREEN, primary=True)
+        self.btn_iniciar.grid(row=0, column=0, sticky="ew", ipady=4)
+        self._btn(acts, "◉ LER AGORA", self.on_ler_agora,
+                  accent=ACCENT_CYAN).grid(row=0, column=1, sticky="ew",
+                                           ipady=4, padx=(6, 0))
+
+        # RECONHECER
+        self.btn_reconhecer = tk.Button(
+            frm, text="⚠  RECONHECER ALARME", font=("Segoe UI", 10, "bold"),
+            bg=self.cor_alarme, fg="white", activebackground="#8e0000",
+            activeforeground="white",
+            command=self.on_reconhecer, state="disabled",
+            bd=0, relief="flat", cursor="hand2",
+            highlightthickness=0, padx=8, pady=8,
+        )
+        self.btn_reconhecer.pack(fill="x", pady=(0, 6))
+
+        # ---------- LOG ----------
+        p_log, b_log = self._panel(frm, "LOG DE EVENTOS", ACCENT_CYAN)
+        p_log.pack(fill="x")
+        self.log = tk.Text(
+            b_log, height=5, width=54, state="disabled",
+            font=("Consolas", 8), bg=BG_TERM, fg=ACCENT_GREEN,
+            insertbackground=ACCENT_GREEN, relief="flat", bd=0,
+            highlightthickness=1, highlightbackground=BORDER_DIM,
+            wrap="word", padx=6, pady=4,
+        )
+        self.log.pack(fill="both", expand=True)
+
+    # ------------------------------------------------------
+    # Decorações
+    # ------------------------------------------------------
+    def _draw_deco_bar(self, evt, canvas):
+        canvas.delete("all")
+        w = evt.width
+        if w <= 0:
+            return
+        canvas.create_line(0, 1, w * 0.30, 1, fill=ACCENT_CYAN, width=2)
+        canvas.create_line(w * 0.30, 1, w * 0.55, 1, fill=ACCENT_MAGENTA, width=2)
+        canvas.create_line(w * 0.55, 1, w * 0.80, 1, fill=ACCENT_PURPLE, width=2)
+        canvas.create_line(w * 0.80, 1, w, 1, fill=ACCENT_GREEN, width=2)
+
+    def _start_pulse(self):
+        seq = [ACCENT_GREEN, "#00cc70", "#008844", "#00cc70"]
+        def tick(i=0):
+            if not self.root.winfo_exists():
+                return
+            try:
+                self.lbl_pulse.config(fg=seq[i % len(seq)])
+            except tk.TclError:
+                return
+            self._pulse_after_id = self.root.after(700, tick, i + 1)
+        tick()
+
+    # ------------------------------------------------------
+    # COR DO ALARME
+    # ------------------------------------------------------
     def _aplicar_cor_preset(self, nome):
         for n, cor, pisca in CORES_PRESET:
             if n == nome:
@@ -532,7 +720,8 @@ class App:
         return f"#{r:02x}{g:02x}{b:02x}"
 
     def _atualizar_cor_botao(self):
-        self.btn_reconhecer.config(bg=self.cor_alarme, activebackground=self.cor_alarme)
+        self.btn_reconhecer.config(bg=self.cor_alarme,
+                                   activebackground=self.cor_alarme)
         if self.estado == ALARMANDO:
             self.lbl_estado.config(fg=self.cor_alarme)
 
@@ -562,8 +751,8 @@ class App:
     def registrar_leitura(self, texto, marca):
         self.historico = (self.historico + [marca])[-6:]
         self.lbl_hora.config(
-            text=f"Última: {time.strftime('%H:%M:%S')} | OCR: {texto!r} | "
-                 f"Hist: {' '.join(self.historico)}")
+            text=f"ÚLTIMA: {time.strftime('%H:%M:%S')} | OCR: {texto!r} | "
+                 f"HIST: {' '.join(self.historico)}")
 
     def ler_limite_parado(self):
         try:
@@ -596,9 +785,8 @@ class App:
 
     # ---------- COR DE REFERÊNCIA ----------
     def recapturar_cor_ref(self):
-        """Recaptura a cor da área atual como nova referência."""
         if self.area is None:
-            self.lbl_status.config(text="Selecione a área primeiro", fg="red")
+            self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
             return
         try:
             bgr = capturar_area_cv(self.area)
@@ -611,22 +799,19 @@ class App:
         self.cont_cor_boa = 0
         r, g, b = self.cor_referencia_rgb
         self.escrever_log(f"Cor de referência (RGB): ({r},{g},{b})")
-        self.lbl_cor_info.config(text=f"ref\n{r},{g},{b}", fg="gray")
+        self.lbl_cor_info.config(text=f"ref\n{r},{g},{b}", fg=FG_DIM)
         self._atualizar_amostra_cor(bgr, ref=True)
 
     def _atualizar_amostra_cor(self, bgr, ref=False, diferente=False):
         r, g, b = cor_media_rgb(bgr)
         hex_cor = f"#{r:02x}{g:02x}{b:02x}"
-        borda = self.cor_alarme if diferente else ("green" if not ref else "gray")
+        borda = self.cor_alarme if diferente else (ACCENT_GREEN if not ref else FG_DIM)
         self.lbl_cor_atual.config(bg=hex_cor, highlightbackground=borda,
                                   highlightcolor=borda, highlightthickness=2)
         if not ref:
             self.lbl_cor_info.config(text=f"atual\n{r},{g},{b}", fg=borda)
 
     def verificar_mudanca_cor(self, n_conf, n_volta):
-        """Compara a cor atual com a referência.
-        Retorna True se alarme disparado agora.
-        Se a cor voltar à referência, rearma automaticamente."""
         if self.cor_referencia is None:
             return False
         try:
@@ -644,7 +829,6 @@ class App:
 
         if not mudou:
             self.cont_cor_ruim = 0
-            # Se estava ALARMANDO por cor, volta a rearmar
             if self.estado == ALARMANDO:
                 self.cont_cor_boa += 1
                 if self.cont_cor_boa >= n_volta:
@@ -652,14 +836,14 @@ class App:
                     self.rearmar(f"cor dist={dist:.1f}")
                 else:
                     self.lbl_status.config(
-                        text=f"Cor voltando: {self.cont_cor_boa}/{n_volta}", fg="green")
+                        text=f"Cor voltando: {self.cont_cor_boa}/{n_volta}",
+                        fg=ACCENT_GREEN)
             elif self.estado == RECONHECIDO:
                 self.cont_cor_boa += 1
                 if self.cont_cor_boa >= n_volta:
                     self.rearmar(f"cor dist={dist:.1f}")
             return False
 
-        # cor mudou
         self.cont_cor_boa = 0
         self.cont_cor_ruim += 1
         motivo = f"cor mudou (dist={dist:.1f} > tol={tol:.1f})"
@@ -670,7 +854,7 @@ class App:
         else:
             self.lbl_status.config(
                 text=f"Cor mudou: confirmando {self.cont_cor_ruim}/{n_conf} (dist={dist:.1f})",
-                fg="#e65100")
+                fg=ACCENT_ORANGE)
         return False
 
     # ---------- texto de referência ----------
@@ -685,11 +869,10 @@ class App:
         self.texto_referencia = normalizar_texto(texto)
         if self.texto_referencia:
             self.lbl_texto_ref.config(
-                text=f"Texto ref.: {texto[:60]!r}", foreground="black")
+                text=f"TEXTO REF.: {texto[:60]!r}", fg=FG_TEXT)
             self.escrever_log(f"Texto de referência capturado: {texto!r}")
         else:
-            self.lbl_texto_ref.config(
-                text="Texto ref.: (vazio)", foreground="gray")
+            self.lbl_texto_ref.config(text="TEXTO REF.: (vazio)", fg=FG_DIM)
             self.escrever_log("Texto de referência capturado: (vazio)")
         self.cont_texto_ruim = 0
 
@@ -708,7 +891,7 @@ class App:
         texto_atual_norm = normalizar_texto(texto_atual)
         if texto_atual_norm == self.texto_referencia:
             self.cont_texto_ruim = 0
-            self.lbl_texto_atual.config(fg="green")
+            self.lbl_texto_atual.config(fg=ACCENT_GREEN)
             return False
 
         self.lbl_texto_atual.config(fg=self.cor_alarme)
@@ -725,9 +908,9 @@ class App:
     # ---------- estado ----------
     def _mostrar_estado(self):
         textos = {
-            ARMADO: ("ARMADO", "green"),
+            ARMADO: ("ARMADO", ACCENT_GREEN),
             ALARMANDO: ("ALARMANDO — clique em RECONHECER", self.cor_alarme),
-            RECONHECIDO: ("RECONHECIDO — aguardando voltar", "#e65100"),
+            RECONHECIDO: ("RECONHECIDO — aguardando voltar", ACCENT_ORANGE),
         }
         txt, cor = textos[self.estado]
         self.lbl_estado.config(text=f"Estado: {txt}", fg=cor)
@@ -767,7 +950,7 @@ class App:
         self.cont_texto_ruim = 0
         self.cont_cor_ruim = 0
         self.mudar_estado(RECONHECIDO)
-        self.lbl_status.config(text="Alarme reconhecido", fg="#e65100")
+        self.lbl_status.config(text="Alarme reconhecido", fg=ACCENT_ORANGE)
 
     def rearmar(self, valores_txt):
         self.parar_sirene()
@@ -778,7 +961,7 @@ class App:
         self.cont_cor_boa = 0
         self.mudar_estado(ARMADO)
         self.escrever_log(f"Normalizou ({valores_txt}). Alarme rearmado.")
-        self.lbl_status.config(text="Tudo normal — OK (rearmado)", fg="green")
+        self.lbl_status.config(text="Tudo normal — OK (rearmado)", fg=ACCENT_GREEN)
 
     # ---------- ações ----------
     def on_selecionar(self):
@@ -797,7 +980,7 @@ class App:
         self.area = area
         self.lbl_area.config(
             text=f"{area['width']}x{area['height']} @({area['left']},{area['top']})",
-            foreground="black",
+            fg=FG_TEXT,
         )
         self.escrever_log(f"Área selecionada: {area}")
         self.parar_sirene()
@@ -811,7 +994,7 @@ class App:
         try:
             t = extrair_texto_completo(self.area)
             self.ultimo_texto_lido = t
-            self.lbl_texto_atual.config(text=t if t else "(vazio)", fg="black")
+            self.lbl_texto_atual.config(text=t if t else "(vazio)", fg=FG_TEXT)
         except Exception:
             pass
 
@@ -821,13 +1004,13 @@ class App:
             if self._after_id is not None:
                 self.root.after_cancel(self._after_id)
                 self._after_id = None
-            self.btn_iniciar.config(text="INICIAR")
-            self.lbl_status.config(text="Monitoramento parado", fg="gray")
+            self.btn_iniciar.config(text="▶ INICIAR")
+            self.lbl_status.config(text="Monitoramento parado", fg=FG_DIM)
             self.escrever_log("Monitoramento parado.")
             return
 
         if self.area is None:
-            self.lbl_status.config(text="Selecione a área primeiro", fg="red")
+            self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
             return
 
         modo = self.var_modo.get()
@@ -838,13 +1021,13 @@ class App:
 
         self.monitorando = True
         self.reiniciar_detector_parado()
-        self.btn_iniciar.config(text="PARAR")
+        self.btn_iniciar.config(text="■ PARAR")
         self.escrever_log(f"Monitoramento iniciado (modo {modo}).")
         self._ciclo()
 
     def on_ler_agora(self):
         if self.area is None:
-            self.lbl_status.config(text="Selecione a área primeiro", fg="red")
+            self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
             return
         self._ler_protegido()
 
@@ -852,7 +1035,7 @@ class App:
         try:
             self.ler_e_avaliar()
         except Exception as e:
-            self.lbl_status.config(text=f"Erro inesperado: {e}", fg="red")
+            self.lbl_status.config(text=f"Erro inesperado: {e}", fg=ACCENT_RED)
             self.escrever_log(f"Erro inesperado: {e!r}")
 
     def _ciclo(self):
@@ -881,13 +1064,14 @@ class App:
             else:
                 self.lbl_status.config(
                     text=f"Fora: confirmando {self.cont_ruim}/{n_conf} ({texto_motivos})",
-                    fg="#e65100")
+                    fg=ACCENT_ORANGE)
                 self.escrever_log(f"Fora, confirmando {self.cont_ruim}/{n_conf}: {texto_motivos}")
         elif self.estado == ALARMANDO:
             self.lbl_status.config(text="ALARME: " + texto_motivos, fg=self.cor_alarme)
             self.disparar_alarme(trazer_frente=False)
         else:
-            self.lbl_status.config(text="Reconhecido, condição persiste: " + texto_motivos, fg="#e65100")
+            self.lbl_status.config(text="Reconhecido, condição persiste: " + texto_motivos,
+                                   fg=ACCENT_ORANGE)
 
     # ---------- leitura e decisão ----------
     def ler_e_avaliar(self):
@@ -900,7 +1084,7 @@ class App:
             limite_max = ler_limite(self.var_max.get())
             limite_min = ler_limite(self.var_min.get())
         except ValueError:
-            self.lbl_status.config(text="Limite inválido", fg="red")
+            self.lbl_status.config(text="Limite inválido", fg=ACCENT_RED)
             return
 
         n_conf = self.ler_confirmacoes()
@@ -914,12 +1098,10 @@ class App:
         agora = time.monotonic()
         limite_ileg = self.ler_limite_ilegivel()
 
-        # ---- TEXTO ----
         if usa_texto and self.texto_referencia is not None:
             if self.verificar_mudanca_texto(n_conf):
                 return
 
-        # ---- COR ----
         if usa_cor and self.cor_referencia is not None:
             if self.verificar_mudanca_cor(n_conf, n_volta):
                 return
@@ -929,11 +1111,10 @@ class App:
                 self.lbl_valor.config(text="—")
             return
 
-        # ---- NÚMERO ----
         try:
             texto, valor = extrair_numeros(self.area)
         except Exception as e:
-            self.lbl_status.config(text=f"Erro na leitura: {e}", fg="red")
+            self.lbl_status.config(text=f"Erro na leitura: {e}", fg=ACCENT_RED)
             self.escrever_log(f"Erro na leitura: {e}")
             if self.t_ilegivel is None:
                 self.t_ilegivel = agora
@@ -944,14 +1125,15 @@ class App:
 
         if valor is None:
             self.registrar_leitura(texto, "?")
-            self.lbl_valor.config(text="?", fg="orange")
+            self.lbl_valor.config(text="?", fg=ACCENT_ORANGE)
             if self.t_ilegivel is None:
                 self.t_ilegivel = agora
             ileg_seg = agora - self.t_ilegivel
             if limite_ileg > 0 and ileg_seg > limite_ileg:
                 self.tratar_zona_ruim([f"sem ler há {int(ileg_seg)}s"], n_conf, forcar=True)
             else:
-                self.lbl_status.config(text=f"Sem número (há {int(ileg_seg)}s)", fg="orange")
+                self.lbl_status.config(text=f"Sem número (há {int(ileg_seg)}s)",
+                                       fg=ACCENT_ORANGE)
             return
 
         self.t_ilegivel = None
@@ -981,18 +1163,18 @@ class App:
         self.registrar_leitura(texto, f"{valor:g}{'✗' if motivos else '✓'}")
 
         if not motivos:
-            self.lbl_valor.config(fg="green")
+            self.lbl_valor.config(fg=ACCENT_GREEN)
             self.cont_ruim = 0
             if self.estado == ARMADO:
                 self.cont_boa = 0
-                self.lbl_status.config(text="Dentro da faixa — OK", fg="green")
+                self.lbl_status.config(text="Dentro da faixa — OK", fg=ACCENT_GREEN)
             else:
                 self.cont_boa += 1
                 if self.cont_boa >= n_volta:
                     self.rearmar(valores_txt)
                 else:
                     self.lbl_status.config(
-                        text=f"Voltando: {self.cont_boa}/{n_volta}", fg="green")
+                        text=f"Voltando: {self.cont_boa}/{n_volta}", fg=ACCENT_GREEN)
             return
 
         self.tratar_zona_ruim(motivos, n_conf, forcar=parado)
@@ -1000,6 +1182,11 @@ class App:
     def on_fechar(self):
         self.monitorando = False
         self.sirene.parar()
+        if self._pulse_after_id is not None:
+            try:
+                self.root.after_cancel(self._pulse_after_id)
+            except Exception:
+                pass
         self.root.destroy()
 
 
