@@ -1002,12 +1002,164 @@ class App:
         except Exception:
             pass
 
+        self.root.update_idletasks()
 
-# RESTANTE do arquivo omitido na edição, preservado original
+    def on_alternar(self):
+        if self.monitorando:
+            self.monitorando = False
+            if self._after_id is not None:
+                self.root.after_cancel(self._after_id)
+                self._after_id = None
+            self.btn_iniciar.config(text="▶ INICIAR")
+            self.lbl_status.config(text="Monitoramento parado", fg=FG_DIM)
+            self.escrever_log("Monitoramento parado.")
+            return
+
+        if self.area is None:
+            self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
+            return
+        self.monitorando = True
+        self.reiniciar_detector_parado()
+        self.btn_iniciar.config(text="■ PARAR")
+        self.lbl_status.config(text="Monitoramento ativo", fg=ACCENT_GREEN)
+        self.escrever_log("Monitoramento iniciado.")
+        self._ciclo()
+
+    def on_ler_agora(self):
+        if self.area is None:
+            self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
+            return
+        self._ciclo(forcar=True)
+
+    def _ciclo(self, forcar=False):
+        if not self.monitorando:
+            return
+        try:
+            self.leitura_uma_vez()
+        except Exception as e:
+            self.escrever_log(f"Erro no ciclo: {e!r}")
+            self.lbl_status.config(text=f"Erro no ciclo: {e}", fg=ACCENT_RED)
+        self._after_id = self.root.after(1000, self._ciclo)
+
+    def leitura_uma_vez(self):
+        if self.area is None:
+            return
+
+        modo = self.var_modo.get()
+        usar_numero = modo in (MODO_NUMERO, MODO_AMBOS)
+        usar_texto = modo in (MODO_TEXTO, MODO_AMBOS)
+        usar_cor = modo in (MODO_COR, MODO_AMBOS)
+
+        try:
+            limite_max = ler_limite(self.var_max.get())
+            limite_min = ler_limite(self.var_min.get())
+        except ValueError:
+            self.lbl_status.config(text="Limite inválido", fg=ACCENT_RED)
+            return
+
+        n_conf = self.ler_confirmacoes()
+        n_volta = self.ler_confirmacoes_volta()
+        self.lbl_aviso.config(text="" if self.janela_sobre_area() else "Janela sobre a área não está visível")
+
+        if usar_texto and self.texto_referencia is not None:
+            if self.verificar_mudanca_texto(n_conf):
+                return
+
+        if usar_cor and self.cor_referencia is not None:
+            if self.verificar_mudanca_cor(n_conf, n_volta):
+                return
+
+        if not usar_numero and not usar_texto and not usar_cor:
+            self.lbl_valor.config(text="—")
+            return
+
+        try:
+            texto, valor = extrair_numeros(self.area)
+        except Exception as e:
+            self.escrever_log(f"Erro na leitura: {e!r}")
+            self.lbl_status.config(text=f"Erro na leitura: {e}", fg=ACCENT_RED)
+            return
+
+        if valor is None:
+            self.registrar_leitura(texto, "?")
+            self.lbl_valor.config(text="?", fg=ACCENT_ORANGE)
+            self.lbl_status.config(text="Sem leitura válida", fg=ACCENT_ORANGE)
+            return
+
+        self.registrar_leitura(texto, str(valor))
+        self.lbl_valor.config(text=f"{valor:g}", fg=ACCENT_CYAN)
+
+        absoluto = bool(self.var_abs.get())
+        ref = abs(valor) if absoluto else valor
+        motivos = []
+
+        if limite_max is not None and ref > limite_max:
+            motivos.append(f"{ref} > {limite_max}")
+        if limite_min is not None and ref < limite_min:
+            motivos.append(f"{ref} < {limite_min}")
+
+        if self.ultimo_valor is None or abs(valor - self.ultimo_valor) > TOLERANCIA_MUDANCA:
+            self.ultimo_valor = valor
+            self.t_mudanca = time.monotonic()
+
+        limite_parado = self.ler_limite_parado()
+        parado_seg = time.monotonic() - self.t_mudanca if self.t_mudanca else 0
+        if limite_parado > 0 and parado_seg > limite_parado:
+            motivos.append(f"parado há {int(parado_seg)}s")
+
+        if not motivos:
+            self.cont_ruim = 0
+            if self.estado == ARMADO:
+                self.cont_boa = 0
+                self.lbl_status.config(text="Dentro da faixa — OK", fg=ACCENT_GREEN)
+            else:
+                self.cont_boa += 1
+                if self.cont_boa >= n_volta:
+                    self.rearmar(f"valor={valor:g}")
+            return
+
+        self.tratar_zona_ruim(motivos, n_conf, forcar=False)
+
+    def tratar_zona_ruim(self, motivos, n_conf, forcar=False):
+        self.lbl_valor.config(fg=self.cor_alarme)
+        self.cont_boa = 0
+        texto_motivos = "; ".join(motivos)
+
+        if self.estado == ARMADO:
+            self.cont_ruim += 1
+            if self.cont_ruim >= n_conf or forcar:
+                self.mudar_estado(ALARMANDO)
+                self.lbl_status.config(text=f"ALARME: {texto_motivos}", fg=self.cor_alarme)
+                self.escrever_log(f"ALARME confirmado: {texto_motivos}")
+                self.disparar_alarme(trazer_frente=True)
+            else:
+                self.lbl_status.config(
+                    text=f"Fora: confirmando {self.cont_ruim}/{n_conf} ({texto_motivos})",
+                    fg=ACCENT_ORANGE)
+                self.escrever_log(f"Fora, confirmando {self.cont_ruim}/{n_conf}: {texto_motivos}")
+        elif self.estado == ALARMANDO:
+            self.lbl_status.config(text=f"ALARME: {texto_motivos}", fg=self.cor_alarme)
+            self.escrever_log(f"ALARMANDO: {texto_motivos}")
+            self.disparar_alarme(trazer_frente=False)
+        else:
+            self.lbl_status.config(text=f"Reconhecido, condição persiste: {texto_motivos}", fg=ACCENT_ORANGE)
+            self.escrever_log(f"Reconhecido, condição persiste: {texto_motivos}")
+
+    def on_fechar(self):
+        self.monitorando = False
+        self.sirene.parar()
+        if self._pulse_after_id is not None:
+            try:
+                self.root.after_cancel(self._pulse_after_id)
+            except Exception:
+                pass
+            self._pulse_after_id = None
+        self.root.destroy()
+
 
 def main():
     root = tk.Tk()
-    app = App(root)
+    App(root)
     root.mainloop()
 
 
