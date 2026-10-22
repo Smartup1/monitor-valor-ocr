@@ -359,6 +359,8 @@ class App:
 
         root.title("◈ NEXUS-7 // MONITOR DE SISTEMA")
         root.configure(bg=BG_DEEP)
+        root.geometry("420x760")
+        root.minsize(420, 760)
         root.resizable(False, False)
         root.attributes("-topmost", True)
         root.protocol("WM_DELETE_WINDOW", self.on_fechar)
@@ -430,12 +432,12 @@ class App:
     # Montagem completa da UI
     # ------------------------------------------------------
     def _build_ui(self):
-        frm = tk.Frame(self.root, bg=BG_DEEP, padx=10, pady=10)
+        frm = tk.Frame(self.root, bg=BG_DEEP, padx=8, pady=8)
         frm.pack(fill="both", expand=True)
 
         # ---------- HEADER ----------
         header = tk.Frame(frm, bg=BG_DEEP)
-        header.pack(fill="x", pady=(0, 8))
+        header.pack(fill="x", pady=(0, 6))
 
         logo = tk.Label(header, text="◈", fg=ACCENT_CYAN, bg=BG_DEEP,
                         font=("Segoe UI", 18, "bold"))
@@ -455,7 +457,7 @@ class App:
 
         # ---------- PAINEL ÁREA ----------
         p_area, b_area = self._panel(frm, "ÁREA DE CAPTURA", ACCENT_CYAN)
-        p_area.pack(fill="x", pady=(0, 6))
+        p_area.pack(fill="x", pady=(0, 4))
         linha = tk.Frame(b_area, bg=BG_PANEL)
         linha.pack(fill="x")
         self._btn(linha, "1) SELECIONAR ÁREA", self.on_selecionar,
@@ -466,7 +468,7 @@ class App:
 
         # ---------- PAINEL MODO ----------
         p_modo, b_modo = self._panel(frm, "MODO DE MONITORAMENTO", ACCENT_MAGENTA)
-        p_modo.pack(fill="x", pady=(0, 6))
+        p_modo.pack(fill="x", pady=(0, 4))
         self.var_modo = tk.StringVar(value=MODO_NUMERO)
         modos = tk.Frame(b_modo, bg=BG_PANEL)
         modos.pack(fill="x")
@@ -477,7 +479,7 @@ class App:
 
         # ---------- PAINEL PARÂMETROS ----------
         p_par, b_par = self._panel(frm, "PARÂMETROS", ACCENT_PURPLE)
-        p_par.pack(fill="x", pady=(0, 6))
+        p_par.pack(fill="x", pady=(0, 4))
 
         # linha 1 — limites + intervalo
         l1 = tk.Frame(b_par, bg=BG_PANEL)
@@ -552,7 +554,7 @@ class App:
 
         # ---------- PAINEL LEITURA ----------
         p_rd, b_rd = self._panel(frm, "TELEMETRIA / LEITURA", ACCENT_GREEN)
-        p_rd.pack(fill="x", pady=(0, 6))
+        p_rd.pack(fill="x", pady=(0, 4))
 
         grid = tk.Frame(b_rd, bg=BG_PANEL)
         grid.pack(fill="x")
@@ -575,7 +577,7 @@ class App:
         tk.Label(ct, text="TEXTO ATUAL", fg=FG_LABEL, bg=BG_PANEL,
                  font=FONT_LABEL).pack(anchor="w")
         self.lbl_texto_atual = tk.Label(
-            ct, text="—", font=("Consolas", 8), height=3,
+            ct, text="—", font=("Consolas", 8), height=2,
             wraplength=170, justify="left", anchor="nw",
             bg=BG_INPUT, fg=FG_TEXT, bd=0,
             highlightthickness=1, highlightbackground=BORDER_DIM,
@@ -599,7 +601,7 @@ class App:
 
         # ---------- PAINEL STATUS ----------
         p_st, b_st = self._panel(frm, "STATUS DO SISTEMA", ACCENT_ORANGE)
-        p_st.pack(fill="x", pady=(0, 6))
+        p_st.pack(fill="x", pady=(0, 4))
 
         self.lbl_hora = tk.Label(
             b_st, text="SEM LEITURA AINDA", font=FONT_TECH_SMALL, fg=FG_DIM,
@@ -631,7 +633,7 @@ class App:
 
         # ---------- AÇÕES ----------
         acts = tk.Frame(frm, bg=BG_DEEP)
-        acts.pack(fill="x", pady=(0, 6))
+        acts.pack(fill="x", pady=(0, 4))
         acts.columnconfigure(0, weight=1)
         acts.columnconfigure(1, weight=1)
         self.btn_iniciar = self._btn(acts, "▶ INICIAR", self.on_alternar,
@@ -650,13 +652,13 @@ class App:
             bd=0, relief="flat", cursor="hand2",
             highlightthickness=0, padx=8, pady=8,
         )
-        self.btn_reconhecer.pack(fill="x", pady=(0, 6))
+        self.btn_reconhecer.pack(fill="x", pady=(0, 4))
 
         # ---------- LOG ----------
         p_log, b_log = self._panel(frm, "LOG DE EVENTOS", ACCENT_CYAN)
         p_log.pack(fill="x")
         self.log = tk.Text(
-            b_log, height=5, width=54, state="disabled",
+            b_log, height=4, width=54, state="disabled",
             font=("Consolas", 8), bg=BG_TERM, fg=ACCENT_GREEN,
             insertbackground=ACCENT_GREEN, relief="flat", bd=0,
             highlightthickness=1, highlightbackground=BORDER_DIM,
@@ -998,6 +1000,8 @@ class App:
         except Exception:
             pass
 
+        self.root.update_idletasks()
+
     def on_alternar(self):
         if self.monitorando:
             self.monitorando = False
@@ -1012,73 +1016,37 @@ class App:
         if self.area is None:
             self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
             return
-
-        modo = self.var_modo.get()
-        if modo in (MODO_TEXTO, MODO_AMBOS) and self.texto_referencia is None:
-            self.capturar_texto_referencia()
-        if modo in (MODO_COR, MODO_AMBOS) and self.cor_referencia is None:
-            self.recapturar_cor_ref()
-
         self.monitorando = True
         self.reiniciar_detector_parado()
         self.btn_iniciar.config(text="■ PARAR")
-        self.escrever_log(f"Monitoramento iniciado (modo {modo}).")
+        self.lbl_status.config(text="Monitoramento ativo", fg=ACCENT_GREEN)
+        self.escrever_log("Monitoramento iniciado.")
         self._ciclo()
 
     def on_ler_agora(self):
         if self.area is None:
             self.lbl_status.config(text="Selecione a área primeiro", fg=ACCENT_RED)
             return
-        self._ler_protegido()
+        self._ciclo(forcar=True)
 
-    def _ler_protegido(self):
-        try:
-            self.ler_e_avaliar()
-        except Exception as e:
-            self.lbl_status.config(text=f"Erro inesperado: {e}", fg=ACCENT_RED)
-            self.escrever_log(f"Erro inesperado: {e!r}")
-
-    def _ciclo(self):
+    def _ciclo(self, forcar=False):
         if not self.monitorando:
             return
-        self._ler_protegido()
         try:
-            seg = max(0.5, float(self.var_int.get().replace(",", ".")))
-        except ValueError:
-            seg = INTERVALO_PADRAO_S
-        self._after_id = self.root.after(int(seg * 1000), self._ciclo)
+            self.leitura_uma_vez()
+        except Exception as e:
+            self.escrever_log(f"Erro no ciclo: {e!r}")
+            self.lbl_status.config(text=f"Erro no ciclo: {e}", fg=ACCENT_RED)
+        self._after_id = self.root.after(1000, self._ciclo)
 
-    # ---------- zona ruim ----------
-    def tratar_zona_ruim(self, motivos, n_conf, forcar=False):
-        self.lbl_valor.config(fg=self.cor_alarme)
-        self.cont_boa = 0
-        texto_motivos = "; ".join(motivos)
+    def leitura_uma_vez(self):
+        if self.area is None:
+            return
 
-        if self.estado == ARMADO:
-            self.cont_ruim += 1
-            if self.cont_ruim >= n_conf or forcar:
-                self.mudar_estado(ALARMANDO)
-                self.lbl_status.config(text="ALARME: " + texto_motivos, fg=self.cor_alarme)
-                self.escrever_log(f"ALARME confirmado: {texto_motivos}")
-                self.disparar_alarme(trazer_frente=True)
-            else:
-                self.lbl_status.config(
-                    text=f"Fora: confirmando {self.cont_ruim}/{n_conf} ({texto_motivos})",
-                    fg=ACCENT_ORANGE)
-                self.escrever_log(f"Fora, confirmando {self.cont_ruim}/{n_conf}: {texto_motivos}")
-        elif self.estado == ALARMANDO:
-            self.lbl_status.config(text="ALARME: " + texto_motivos, fg=self.cor_alarme)
-            self.disparar_alarme(trazer_frente=False)
-        else:
-            self.lbl_status.config(text="Reconhecido, condição persiste: " + texto_motivos,
-                                   fg=ACCENT_ORANGE)
-
-    # ---------- leitura e decisão ----------
-    def ler_e_avaliar(self):
         modo = self.var_modo.get()
-        usa_numero = modo in (MODO_NUMERO, MODO_AMBOS)
-        usa_texto = modo in (MODO_TEXTO, MODO_AMBOS)
-        usa_cor = modo in (MODO_COR, MODO_AMBOS)
+        usar_numero = modo in (MODO_NUMERO, MODO_AMBOS)
+        usar_texto = modo in (MODO_TEXTO, MODO_AMBOS)
+        usar_cor = modo in (MODO_COR, MODO_AMBOS)
 
         try:
             limite_max = ler_limite(self.var_max.get())
@@ -1089,81 +1057,55 @@ class App:
 
         n_conf = self.ler_confirmacoes()
         n_volta = self.ler_confirmacoes_volta()
+        self.lbl_aviso.config(text="" if self.janela_sobre_area() else "Janela sobre a área não está visível")
 
-        self.lbl_aviso.config(
-            text="⚠ Janela sobre a área lida — mova-a."
-            if self.janela_sobre_area() else ""
-        )
-
-        agora = time.monotonic()
-        limite_ileg = self.ler_limite_ilegivel()
-
-        if usa_texto and self.texto_referencia is not None:
+        if usar_texto and self.texto_referencia is not None:
             if self.verificar_mudanca_texto(n_conf):
                 return
 
-        if usa_cor and self.cor_referencia is not None:
+        if usar_cor and self.cor_referencia is not None:
             if self.verificar_mudanca_cor(n_conf, n_volta):
                 return
 
-        if not usa_numero:
-            if usa_texto or usa_cor:
-                self.lbl_valor.config(text="—")
+        if not usar_numero and not usar_texto and not usar_cor:
+            self.lbl_valor.config(text="—")
             return
 
         try:
             texto, valor = extrair_numeros(self.area)
         except Exception as e:
+            self.escrever_log(f"Erro na leitura: {e!r}")
             self.lbl_status.config(text=f"Erro na leitura: {e}", fg=ACCENT_RED)
-            self.escrever_log(f"Erro na leitura: {e}")
-            if self.t_ilegivel is None:
-                self.t_ilegivel = agora
-            ileg_seg = agora - self.t_ilegivel
-            if limite_ileg > 0 and ileg_seg > limite_ileg:
-                self.tratar_zona_ruim([f"sem ler há {int(ileg_seg)}s"], n_conf, forcar=True)
             return
 
         if valor is None:
             self.registrar_leitura(texto, "?")
             self.lbl_valor.config(text="?", fg=ACCENT_ORANGE)
-            if self.t_ilegivel is None:
-                self.t_ilegivel = agora
-            ileg_seg = agora - self.t_ilegivel
-            if limite_ileg > 0 and ileg_seg > limite_ileg:
-                self.tratar_zona_ruim([f"sem ler há {int(ileg_seg)}s"], n_conf, forcar=True)
-            else:
-                self.lbl_status.config(text=f"Sem número (há {int(ileg_seg)}s)",
-                                       fg=ACCENT_ORANGE)
+            self.lbl_status.config(text="Sem leitura válida", fg=ACCENT_ORANGE)
             return
 
-        self.t_ilegivel = None
-
-        valores_txt = f"{valor:g}"
-        self.lbl_valor.config(text=valores_txt)
+        self.registrar_leitura(texto, str(valor))
+        self.lbl_valor.config(text=f"{valor:g}", fg=ACCENT_CYAN)
 
         absoluto = bool(self.var_abs.get())
         ref = abs(valor) if absoluto else valor
-        rotulo = f"|{valor:g}|" if absoluto else f"{valor:g}"
-
         motivos = []
+
         if limite_max is not None and ref > limite_max:
-            motivos.append(f"{rotulo} > {limite_max:g}")
+            motivos.append(f"{ref} > {limite_max}")
         if limite_min is not None and ref < limite_min:
-            motivos.append(f"{rotulo} < {limite_min:g}")
+            motivos.append(f"{ref} < {limite_min}")
 
         if self.ultimo_valor is None or abs(valor - self.ultimo_valor) > TOLERANCIA_MUDANCA:
             self.ultimo_valor = valor
-            self.t_mudanca = agora
+            self.t_mudanca = time.monotonic()
+
         limite_parado = self.ler_limite_parado()
-        parado_seg = agora - self.t_mudanca
-        parado = limite_parado > 0 and parado_seg > limite_parado
-        if parado:
+        parado_seg = time.monotonic() - self.t_mudanca if self.t_mudanca else 0
+        if limite_parado > 0 and parado_seg > limite_parado:
             motivos.append(f"parado há {int(parado_seg)}s")
 
-        self.registrar_leitura(texto, f"{valor:g}{'✗' if motivos else '✓'}")
-
         if not motivos:
-            self.lbl_valor.config(fg=ACCENT_GREEN)
             self.cont_ruim = 0
             if self.estado == ARMADO:
                 self.cont_boa = 0
@@ -1171,13 +1113,35 @@ class App:
             else:
                 self.cont_boa += 1
                 if self.cont_boa >= n_volta:
-                    self.rearmar(valores_txt)
-                else:
-                    self.lbl_status.config(
-                        text=f"Voltando: {self.cont_boa}/{n_volta}", fg=ACCENT_GREEN)
+                    self.rearmar(f"valor={valor:g}")
             return
 
-        self.tratar_zona_ruim(motivos, n_conf, forcar=parado)
+        self.tratar_zona_ruim(motivos, n_conf, forcar=False)
+
+    def tratar_zona_ruim(self, motivos, n_conf, forcar=False):
+        self.lbl_valor.config(fg=self.cor_alarme)
+        self.cont_boa = 0
+        texto_motivos = "; ".join(motivos)
+
+        if self.estado == ARMADO:
+            self.cont_ruim += 1
+            if self.cont_ruim >= n_conf or forcar:
+                self.mudar_estado(ALARMANDO)
+                self.lbl_status.config(text=f"ALARME: {texto_motivos}", fg=self.cor_alarme)
+                self.escrever_log(f"ALARME confirmado: {texto_motivos}")
+                self.disparar_alarme(trazer_frente=True)
+            else:
+                self.lbl_status.config(
+                    text=f"Fora: confirmando {self.cont_ruim}/{n_conf} ({texto_motivos})",
+                    fg=ACCENT_ORANGE)
+                self.escrever_log(f"Fora, confirmando {self.cont_ruim}/{n_conf}: {texto_motivos}")
+        elif self.estado == ALARMANDO:
+            self.lbl_status.config(text=f"ALARME: {texto_motivos}", fg=self.cor_alarme)
+            self.escrever_log(f"ALARMANDO: {texto_motivos}")
+            self.disparar_alarme(trazer_frente=False)
+        else:
+            self.lbl_status.config(text=f"Reconhecido, condição persiste: {texto_motivos}", fg=ACCENT_ORANGE)
+            self.escrever_log(f"Reconhecido, condição persiste: {texto_motivos}")
 
     def on_fechar(self):
         self.monitorando = False
@@ -1187,6 +1151,7 @@ class App:
                 self.root.after_cancel(self._pulse_after_id)
             except Exception:
                 pass
+            self._pulse_after_id = None
         self.root.destroy()
 
 
