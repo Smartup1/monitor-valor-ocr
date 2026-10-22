@@ -1,4 +1,4 @@
-## O que faz
+## O que fazemos hahahaha desengenharia
 Monitora uma área da tela e dispara alarme sonoro quando:
 - o valor numérico sai da faixa configurada (acima do máximo ou abaixo do mínimo);
 - o valor fica parado por mais tempo que o limite configurado;
